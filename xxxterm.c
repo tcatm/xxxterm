@@ -2274,13 +2274,9 @@ statustoggle(struct tab *t, struct karg *args)
 {
 	DNPRINTF(XT_D_TAB, "%s: %p %d\n", __func__, t, args->i);
 
-	if (show_statusbar == 1) {
-		show_statusbar = 0;
-		statusbar_set_visibility();
-	} else if (show_statusbar == 0) {
-		show_statusbar = 1;
-		statusbar_set_visibility();
-	}
+  show_statusbar ^= 1;
+	statusbar_set_visibility();
+
 	return (XT_CB_HANDLED);
 }
 
