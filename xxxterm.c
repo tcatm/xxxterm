@@ -941,7 +941,7 @@ disable_hints(struct tab *t)
 	DNPRINTF(XT_D_JS, "%s: tab %d\n", __func__, t->tab_id);
 
 	run_script(t, "hints.clearHints();");
-	t->mode = XT_MODE_COMMAND;
+	set_mode(t, XT_MODE_COMMAND);
 	t->new_tab = 0;
 }
 
@@ -954,7 +954,8 @@ enable_hints(struct tab *t)
 		run_script(t, "hints.createHints('', 'F');");
 	else
 		run_script(t, "hints.createHints('', 'f');");
-	t->mode = XT_MODE_HINT;
+
+	set_mode(t, XT_MODE_HINT);
 }
 
 #define XT_JS_DONE		("done;")
@@ -2514,14 +2515,14 @@ command(struct tab *t, struct karg *args)
 		}
 		break;
 	case '.':
-		t->mode = XT_MODE_HINT;
+		set_mode(t, XT_MODE_HINT);
 		bzero(&a, sizeof a);
 		a.i = 0;
 		hint(t, &a);
 		s = ".";
 		break;
 	case ',':
-		t->mode = XT_MODE_HINT;
+		set_mode(t, XT_MODE_HINT);
 		bzero(&a, sizeof a);
 		a.i = XT_HINT_NEWTAB;
 		hint(t, &a);
@@ -3147,9 +3148,9 @@ wv_button_cb(GtkWidget *btn, GdkEventButton *e, struct tab *t)
 	hide_buffers(t);
 
 	if (context & WEBKIT_HIT_TEST_RESULT_CONTEXT_EDITABLE)
-		t->mode = XT_MODE_INSERT;
+		set_mode(t, XT_MODE_INSERT);
 	else
-		t->mode = XT_MODE_COMMAND;
+		set_mode(t, XT_MODE_COMMAND);
 
 	if (e->type == GDK_BUTTON_PRESS && e->button == 1)
 		btn_down = 1;
@@ -3168,6 +3169,16 @@ wv_button_cb(GtkWidget *btn, GdkEventButton *e, struct tab *t)
 	}
 
 	return (FALSE);
+}
+
+void
+set_mode(struct tab *t, int mode)
+{
+		t->mode = mode;
+    if (t->mode == XT_MODE_INSERT)
+  	  gtk_entry_set_text(GTK_ENTRY(t->sbe.buffercmd), "INSERT");
+    else
+  	  gtk_entry_set_text(GTK_ENTRY(t->sbe.buffercmd), "");
 }
 
 gboolean

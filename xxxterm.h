@@ -472,6 +472,7 @@ char		*get_cookie_policy(struct settings *);
 void		init_keybindings(void);
 void		config_parse(char *, int);
 char		*get_setting_name(int);
+void		set_mode(struct tab *t, int mode);
 
 extern int	tabless;
 extern int	enable_socket;

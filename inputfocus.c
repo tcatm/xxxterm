@@ -208,9 +208,9 @@ input_check_mode(struct tab *t)
 	WebKitDOMElement	*active = NULL;
 
 	if (dom_is_input(t, &active))
-		t->mode = XT_MODE_INSERT;
+		set_mode(t, XT_MODE_INSERT);
 	else
-		t->mode = XT_MODE_COMMAND;
+		set_mode(t, XT_MODE_COMMAND);
 
 	return (active);
 }
@@ -232,10 +232,10 @@ command_mode(struct tab *t, struct karg *args)
 		if (dom_is_input(t, &active))
 			if (active)
 				webkit_dom_element_blur(active);
-		t->mode = XT_MODE_COMMAND;
+		set_mode(t, XT_MODE_COMMAND);
 	} else {
 		if (focus_input(t))
-			t->mode = XT_MODE_INSERT;
+			set_mode(t, XT_MODE_INSERT);
 	}
 
 	return (XT_CB_HANDLED);
@@ -249,14 +249,14 @@ input_autofocus(struct tab *t)
 	if (autofocus_onload &&
 	    t->tab_id == gtk_notebook_get_current_page(notebook)) {
 		if (focus_input(t))
-			t->mode = XT_MODE_INSERT;
+			set_mode(t, XT_MODE_INSERT);
 		else
-			t->mode = XT_MODE_COMMAND;
+			set_mode(t, XT_MODE_COMMAND);
 	} else {
 		if (dom_is_input(t, &active))
 			if (active)
 				webkit_dom_element_blur(active);
-		t->mode = XT_MODE_COMMAND;
+		set_mode(t, XT_MODE_COMMAND);
 	}
 }
 #else /* WEBKIT_CHECK_VERSION */
@@ -274,10 +274,10 @@ input_autofocus(struct tab *t)
 	if (autofocus_onload &&
 	    t->tab_id == gtk_notebook_get_current_page(notebook)) {
 		run_script(t, "hints.focusInput();");
-		t->mode = XT_MODE_INSERT;
+		set_mode(t, XT_MODE_INSERT);
 	} else {
 		run_script(t, "hints.clearFocus();");
-		t->mode = XT_MODE_COMMAND;
+		set_mode(t, XT_MODE_COMMAND);
 	}
 }
 
@@ -285,7 +285,7 @@ void
 input_focus_blur(struct tab *t, void *active)
 {
 	run_script(t, "hints.clearFocus();");
-	t->mode = XT_MODE_COMMAND;
+	set_mode(t, XT_MODE_COMMAND);
 }
 
 void *
@@ -299,10 +299,10 @@ command_mode(struct tab *t, struct karg *args)
 {
 	if (args->i == XT_MODE_COMMAND) {
 		run_script(t, "hints.clearFocus();");
-		t->mode = XT_MODE_COMMAND;
+		set_mode(t, XT_MODE_COMMAND);
 	} else {
 		run_script(t, "hints.focusInput();");
-		t->mode = XT_MODE_INSERT;
+		set_mode(t, XT_MODE_INSERT);
 	}
 
 	return (XT_CB_HANDLED);
