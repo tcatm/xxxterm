@@ -4857,7 +4857,6 @@ int
 wv_keypress_cb(GtkEntry *w, GdkEventKey *e, struct tab *t)
 {
 	char			s[2];
-	void			*active = NULL;
 
 	/* don't use w directly; use t->whatever instead */
 
@@ -4886,9 +4885,6 @@ wv_keypress_cb(GtkEntry *w, GdkEventKey *e, struct tab *t)
 	    (CLEAN(e->state) == SHFT && e->keyval == GDK_Tab))
 		/* something focussy is about to happen */
 		return (XT_CB_PASSTHROUGH);
-
-	/* check if we are some sort of text input thing in the dom */
-	active = input_check_mode(t);
 
 	if (t->mode == XT_MODE_HINT) {
 		/* XXX make sure cmd entry is enabled */
@@ -4942,6 +4938,8 @@ hint_continue(struct tab *t)
 		run_script(t, s);
 		g_free(s);
 	}
+
+	input_check_mode(t);
 
 	rv = FALSE;
 done:
@@ -5580,6 +5578,7 @@ cmd_activate_cb(GtkEntry *entry, struct tab *t)
 		history_add(&shl, search_file, s, &search_history_count);
 	} else if (c[0] == '.' || c[0] == ',') {
 		run_script(t, "hints.fire();");
+		input_check_mode(t);
 		/* XXX history for link following? */
 	} else if (c[0] == ':') {
 		history_add(&chl, command_file, s, &cmd_history_count);
