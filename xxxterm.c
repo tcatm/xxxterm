@@ -6334,7 +6334,12 @@ recolor_compact_tabs(void)
 void
 set_current_tab(int page_num)
 {
-	buffercmd_abort(get_current_tab());
+	struct tab		*t;
+	t = get_current_tab();
+
+	if (t != NULL)
+		buffercmd_abort(t);
+
 	gtk_notebook_set_current_page(notebook, page_num);
 	recolor_compact_tabs();
 }
