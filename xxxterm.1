@@ -392,13 +392,17 @@ Quit
 .Pq Cm quitall
 .El
 .Ss Low-Contrast Color Scheme
-This command toggles the page's style between the default CSS and a
+These commands toggle the page style between the default CSS and a
 low-contrast color scheme with light grey text on a dark grey background.
 .Pp
 .Bl -tag -width Ds -offset indent -compact
 .It Cm s
 Toggle the current tab's style.
 .Pq Cm userstyle
+.It Cm S
+Toggle the global page style mode.
+Will also affect new tabs.
+.Pq Cm userstyle_global
 .El
 .Sh COMMAND MODE
 Command mode works in a similar fashion to the
@@ -504,6 +508,8 @@ Shows all session entries in the JS whitelist.
 Toggle Java Script execution for the current FQDN.
 .It Cm js toggle domain
 Toggle Java Script execution for the current top level domain.
+.It Cm loadimages
+If auto_load_images is disabled, load all images for current site.
 .It Cm open , op , o URL
 Open URL.
 .It Cm plugin
@@ -670,14 +676,16 @@ go to the
 percent of the page
 .It Cm zz
 go to 50% of the page
-.It Cm [0-9]*gU
+.It Cm [0-9]*gu
 go
 .Cm arg
 levels up. If
 .Cm arg
 is missing, 1 is assumed. Going a
-level up means going to a uri obtained from the current one by removing
+level up means going to a URI obtained from the current one by removing
 the last slash ('/') character and everything that follows it
+.It Cm gU
+go to the root level, i.e. going up as many levels as possible.
 .It Cm gh
 open the home page in the current tab
 .It Cm m[a-zA-Z0-9]
@@ -702,6 +710,18 @@ open the uri marked as quickmark
 in a new tab
 .It Cm [0-9]+t
 activate tab number
+.It Cm g0
+go to first tab
+.It Cm g$
+go to last tab
+.It Cm [0-9]*gt
+go to the
+.Cm arg
+next tab
+.It Cm [0-9]*gT
+go to the
+.Cm arg
+previous tab
 .Cm arg
 .It Cm ZZ
 quit
@@ -893,6 +913,8 @@ Unfortunately enabling this does allow for some limited tracking on the web.
 .It Cm append_next
 When set a new tab is appended after the current tab instead of being appended
 as the last tab.
+.It Cm auto_load_images
+If disabled, images will not be loaded automatically.
 .It Cm autofocus_onload
 When set a tab that is loaded will attempt to autofocus the default input
 entry.
@@ -940,6 +962,15 @@ See the default config file for more details.
 Set the command prompt font.
 E.g.
 .Pa cmd_font = monospace normal 9 .
+.It Cm color_visited_uris
+When enabled (the default)
+.Nm
+will color visited links. This is done while the web page loads using
+JavaScript, rather than WebKit's (broken, see bug #51747) built-in
+facility for coloring visited links. The JavaScript approach is
+(probably) slower and is not consistent across tabs (unless the tabs are
+reloaded), but has the advantage of not leaking history data to web
+pages (see http://wtikay.com/docs/details.html).
 .It Cm cookie_policy
 This field delineates the cookie policy.
 Possible values are: no3rdparty, reject 3rd party cookies.
@@ -1200,11 +1231,15 @@ URL when using
 .It Cm user_agent
 Set to override the default
 .Nm
-user-agent string.
+user-agent string. May be specified several times for switching between user-agents.
+.It Cm user_agent_roundrobin
+If enabled, switches between specified user-agents for each new request.
 .It Cm window_height
 Set the default height of the browser window.
 .It Cm window_width
 Set the default width of the browser window.
+.It Cm window_maximize
+Maximize the browser window at startup.
 .It Cm work_dir
 Set the work directory where all
 .Nm
@@ -1235,11 +1270,3 @@ was written by
 .An Raphael Graf Aq r@undefined.ch ,
 and
 .An Michal Mazurek Aq akfaew@jasminek.net .
-.Sh BUGS
-When
-.Cm save_global_history
-is enabled
-.Nm
-is supposed to, in addition to restoring the global history, color the
-visited links accordingly; however due to bug #51747 in WebKit this does
-not happen.

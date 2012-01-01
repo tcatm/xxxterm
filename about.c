@@ -70,6 +70,7 @@
 #define XT_XTP_DL_LIST		(1)
 #define XT_XTP_DL_CANCEL	(2)
 #define XT_XTP_DL_REMOVE	(3)
+#define XT_XTP_DL_UNLINK	(4)
 
 /* XTP history actions */
 #define XT_XTP_HL_LIST		(1)
@@ -78,6 +79,7 @@
 /* XTP cookie actions */
 #define XT_XTP_CL_LIST		(1)
 #define XT_XTP_CL_REMOVE	(2)
+#define XT_XTP_CL_REMOVE_DOMAIN	(3)
 
 /* XTP cookie actions */
 #define XT_XTP_FL_LIST		(1)
@@ -498,6 +500,10 @@ xtp_handle_dl(struct tab *t, uint8_t cmd, int id)
 	case XT_XTP_DL_CANCEL:
 		webkit_download_cancel(d->download);
 		break;
+	case XT_XTP_DL_UNLINK:
+		unlink(webkit_download_get_destination_uri(d->download) +
+		    strlen("file://"));
+		/* FALLTHROUGH */
 	case XT_XTP_DL_REMOVE:
 		webkit_download_cancel(d->download); /* just incase */
 		g_object_unref(d->download);
@@ -710,6 +716,9 @@ xtp_handle_cl(struct tab *t, uint8_t cmd, int arg)
 		break;
 	case XT_XTP_CL_REMOVE:
 		remove_cookie(arg);
+		break;
+	case XT_XTP_CL_REMOVE_DOMAIN:
+		remove_cookie_domain(arg);
 		break;
 	default:
 		show_oops(t, "%s: unknown cookie xtp command", __func__);
@@ -1057,8 +1066,9 @@ xtp_page_dl_row(struct tab *t, char *html, struct download *dl)
 	case WEBKIT_DOWNLOAD_STATUS_FINISHED:
 		status_html = g_strdup_printf("Finished");
 		cmd_html = g_strdup_printf(
-		    "<a href='%s%d/%d'>Remove</a>",
-		    xtp_prefix, XT_XTP_DL_REMOVE, dl->id);
+		    "<a href='%s%d/%d'>Remove</a> / <a href='%s%d/%d'>Unlink</a>",
+		    xtp_prefix, XT_XTP_DL_REMOVE, dl->id, xtp_prefix,
+		    XT_XTP_DL_UNLINK, dl->id);
 		break;
 	case WEBKIT_DOWNLOAD_STATUS_STARTED:
 		/* gather size info */
@@ -1084,13 +1094,17 @@ xtp_page_dl_row(struct tab *t, char *html, struct download *dl)
 		/* LLL */
 	case WEBKIT_DOWNLOAD_STATUS_CANCELLED:
 		status_html = g_strdup_printf("Cancelled");
-		cmd_html = g_strdup_printf("<a href='%s%d/%d'>Remove</a>",
-		    xtp_prefix, XT_XTP_DL_REMOVE, dl->id);
+		cmd_html = g_strdup_printf(
+		    "<a href='%s%d/%d'>Remove</a> / <a href='%s%d/%d'>Unlink</a>",
+		    xtp_prefix, XT_XTP_DL_REMOVE, dl->id, xtp_prefix,
+		    XT_XTP_DL_UNLINK, dl->id);
 		break;
 	case WEBKIT_DOWNLOAD_STATUS_ERROR:
 		status_html = g_strdup_printf("Error!");
-		cmd_html = g_strdup_printf("<a href='%s%d/%d'>Remove</a>",
-		    xtp_prefix, XT_XTP_DL_REMOVE, dl->id);
+		cmd_html = g_strdup_printf(
+		    "<a href='%s%d/%d'>Remove</a> / <a href='%s%d/%d'>Unlink</a>",
+		    xtp_prefix, XT_XTP_DL_REMOVE, dl->id, xtp_prefix,
+		    XT_XTP_DL_UNLINK, dl->id);
 		break;
 	case WEBKIT_DOWNLOAD_STATUS_CREATED:
 		cmd_html = g_strdup_printf("<a href='%s%d/%d'>Cancel</a>",
@@ -1125,6 +1139,7 @@ xtp_page_cl(struct tab *t, struct karg *args)
 {
 	char			*body, *page, *tmp;
 	int			i = 1; /* all ids start 1 */
+	int			domain_id = 0;
 	GSList			*sc, *pc, *pc_start;
 	SoupCookie		*c;
 	char			*type, *table_headers, *last_domain;
@@ -1162,19 +1177,28 @@ xtp_page_cl(struct tab *t, struct karg *args)
 
 		if (strcmp(last_domain, c->domain) != 0) {
 			/* new domain */
+			domain_id ++;
 			free(last_domain);
 			last_domain = strdup(c->domain);
 
 			if (body != NULL) {
 				tmp = body;
 				body = g_strdup_printf("%s</table>"
-				    "<h2>%s</h2>%s\n",
-				    body, c->domain, table_headers);
+				    "<h2>%s</h2>"
+				    "<a href='%s%d/%s/%d/%d'>remove all</a>%s\n",
+				    body, c->domain,
+				    XT_XTP_STR, XT_XTP_CL,
+				    cl_session_key, XT_XTP_CL_REMOVE_DOMAIN, domain_id,
+				    table_headers);
 				g_free(tmp);
 			} else {
 				/* first domain */
-				body = g_strdup_printf("<h2>%s</h2>%s\n",
-				    c->domain, table_headers);
+				body = g_strdup_printf("<h2>%s</h2>"
+				    "<a href='%s%d/%s/%d/%d'>remove all</a>%s\n",
+				    c->domain,
+				    XT_XTP_STR, XT_XTP_CL,
+				    cl_session_key, XT_XTP_CL_REMOVE_DOMAIN, domain_id,
+				    table_headers);
 			}
 		}
 
@@ -1265,7 +1289,7 @@ xtp_page_hl(struct tab *t, struct karg *args)
 
 	/* body */
 	body = g_strdup_printf("<table style='table-layout:fixed'><tr>"
-	    "<th>URI</th><th>Title</th><th style='width: 40px'>Rm</th></tr>\n");
+	    "<th>URI</th><th>Title</th><th>Last visited</th><th style='width: 40px'>Rm</th></tr>\n");
 
 	RB_FOREACH_REVERSE(h, history_list, &hl) {
 		tmp = body;
@@ -1273,9 +1297,10 @@ xtp_page_hl(struct tab *t, struct karg *args)
 		    "%s\n<tr>"
 		    "<td><a href='%s'>%s</a></td>"
 		    "<td>%s</td>"
+		    "<td>%s</td>"
 		    "<td style='text-align: center'>"
 		    "<a href='%s%d/%s/%d/%d'>X</a></td></tr>\n",
-		    body, h->uri, h->uri, h->title,
+		    body, h->uri, h->uri, h->title, ctime(&h->time),
 		    XT_XTP_STR, XT_XTP_HL, hl_session_key,
 		    XT_XTP_HL_REMOVE, i);
 

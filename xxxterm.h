@@ -128,6 +128,8 @@ THE SOFTWARE.
 #define XT_D_CLIP		0x2000
 #define XT_D_BUFFERCMD		0x4000
 #define XT_D_INSPECTOR		0x8000
+#define XT_D_VISITED		0x10000
+#define XT_D_HISTORY		0x20000
 extern u_int32_t	swm_debug;
 #else
 #define DPRINTF(x...)
@@ -224,6 +226,7 @@ struct tab {
 	/* settings */
 	WebKitWebSettings	*settings;
 	gchar			*user_agent;
+	gboolean		load_images;
 
 	/* marks */
 	double			mark[XT_NOMARKS];
@@ -252,8 +255,9 @@ RB_PROTOTYPE(download_list, download, entry, download_rb_cmp);
 
 struct history {
 	RB_ENTRY(history)	entry;
-	const gchar		*uri;
-	const gchar		*title;
+	gchar			*uri;
+	gchar			*title;
+	time_t			time; /* When the item was added. */
 };
 RB_HEAD(history_list, history);
 RB_PROTOTYPE(history_list, history, entry, history_rb_cmp);
@@ -277,6 +281,7 @@ void			button_set_stockid(GtkWidget *, char *);
 
 /* cookies */
 int			remove_cookie(int);
+int			remove_cookie_domain(int);
 void			print_cookie(char *msg, SoupCookie *);
 void			setup_cookies(void);
 
@@ -444,6 +449,12 @@ struct key_binding {
 };
 TAILQ_HEAD(keybinding_list, key_binding);
 
+struct user_agent {
+	char *value;
+	TAILQ_ENTRY(user_agent)	entry;
+};
+TAILQ_HEAD(user_agent_list, user_agent);
+
 struct settings {
 	char		*name;
 	int		type;
@@ -495,6 +506,7 @@ extern gfloat	default_zoom_level;
 extern char	default_script[PATH_MAX];
 extern int	window_height;
 extern int	window_width;
+extern int	window_maximize;
 extern int	icon_size;
 extern int	refresh_interval;
 extern int	enable_plugin_whitelist;
@@ -512,8 +524,10 @@ extern char	*http_proxy;
 extern char	download_dir[PATH_MAX];
 extern char	runtime_settings[PATH_MAX];
 extern int	allow_volatile_cookies;
+extern int	color_visited_uris;
 extern int	save_global_history;
-extern char	*user_agent;
+extern struct user_agent	*user_agent;
+extern int	user_agent_roundrobin;
 extern int	save_rejected_cookies;
 extern int	session_autosave;
 extern int	guess_search;
@@ -535,6 +549,8 @@ extern char	*oops_font_name;
 extern char	*statusbar_font_name;
 extern char	*tabbar_font_name;
 extern int	edit_mode;
+extern int	userstyle_global;
+extern int	auto_load_images;
 
 /* globals */
 extern char		*version;
@@ -561,6 +577,7 @@ extern struct alias_list	aliases;
 extern struct mime_type_list	mtl;
 extern struct keybinding_list	kbl;
 extern struct sp_list		spl;
+extern struct user_agent_list	ua_list;
 
 extern PangoFontDescription	*cmd_font;
 extern PangoFontDescription	*oops_font;

@@ -41,6 +41,8 @@ u_int32_t		swm_debug = 0
 			    | XT_D_CLIP
 			    | XT_D_BUFFERCMD
 			    | XT_D_INSPECTOR
+			    | XT_D_VISITED
+			    | XT_D_HISTORY
 			    ;
 #endif
 
@@ -95,6 +97,11 @@ TAILQ_HEAD(command_list, command_entry);
 #define XT_DLMAN_REFRESH	"10"
 #define XT_MAX_URL_LENGTH	(4096) /* 1 page is atomic, don't make bigger */
 #define XT_MAX_UNDO_CLOSE_TAB	(32)
+#define XT_MAX_HL_PURGE_COUNT	(1000) /* Purge the history for every
+					* MAX_HL_PURGE_COUNT items inserted into
+					* history and delete all items older
+					* than MAX_HISTORY_AGE. */
+#define XT_MAX_HISTORY_AGE	(60.0 * 60.0 * 24 * 14) /* 14 days */
 #define XT_RESERVED_CHARS	"$&+,/:;=?@ \"<>#%%{}|^~[]`"
 #define XT_PRINT_EXTRA_MARGIN	10
 #define XT_URL_REGEX		("^[[:blank:]]*[^[:blank:]]*([[:alnum:]-]+\\.)+[[:alnum:]-][^[:blank:]]*[[:blank:]]*$")
@@ -141,6 +148,8 @@ TAILQ_HEAD(command_list, command_entry);
 #define XT_MARK_SET		(0)
 #define XT_MARK_GOTO		(1)
 
+#define XT_GO_UP_ROOT		(999)
+
 #define XT_TAB_LAST		(-4)
 #define XT_TAB_FIRST		(-3)
 #define XT_TAB_PREV		(-2)
@@ -154,6 +163,7 @@ TAILQ_HEAD(command_list, command_entry);
 #define XT_TAB_SHOW		(6)
 #define XT_TAB_HIDE		(7)
 #define XT_TAB_NEXTSTYLE	(8)
+#define XT_TAB_LOAD_IMAGES	(9)
 
 #define XT_NAV_INVALID		(0)
 #define XT_NAV_BACK		(1)
@@ -168,6 +178,9 @@ TAILQ_HEAD(command_list, command_entry);
 #define XT_SEARCH_INVALID	(0)
 #define XT_SEARCH_NEXT		(1)
 #define XT_SEARCH_PREV		(2)
+
+#define XT_STYLE_CURRENT_TAB	(0)
+#define XT_STYLE_GLOBAL		(1)
 
 #define XT_PASTE_CURRENT_TAB	(0)
 #define XT_PASTE_NEW_TAB	(1)
@@ -223,6 +236,7 @@ GtkWidget		*tab_bar;
 GtkWidget		*arrow, *abtn;
 struct tab_list		tabs;
 struct history_list	hl;
+int			hl_purge_count = 0;
 struct session_list	sessions;
 struct domain_list	c_wl;
 struct domain_list	js_wl;
@@ -230,6 +244,7 @@ struct domain_list	pl_wl;
 struct undo_tailq	undos;
 struct keybinding_list	kbl;
 struct sp_list		spl;
+struct user_agent_list	ua_list;
 struct command_list	chl;
 struct command_list	shl;
 struct command_entry	*history_at;
@@ -576,6 +591,9 @@ buffers_make_list(void)
 void
 show_buffers(struct tab *t)
 {
+	if (gtk_widget_get_visible(GTK_WIDGET(t->buffers)))
+		return;
+
 	buffers_make_list();
 	gtk_widget_show(t->buffers);
 	gtk_widget_grab_focus(GTK_WIDGET(t->buffers));
@@ -828,7 +846,7 @@ get_uri(struct tab *t)
 	const gchar		*uri = NULL;
 
 	if (webkit_web_view_get_load_status(t->wv) == WEBKIT_LOAD_FAILED)
-		return NULL;
+		return (NULL);
 	if (t->xtp_meaning == XT_XTP_TAB_MEANING_NORMAL) {
 		uri = webkit_web_view_get_uri(t->wv);
 	} else {
@@ -1029,38 +1047,118 @@ hint(struct tab *t, struct karg *args)
 void
 apply_style(struct tab *t)
 {
+	t->styled = 1;
 	g_object_set(G_OBJECT(t->settings),
 	    "user-stylesheet-uri", t->stylesheet, (char *)NULL);
+}
+
+void
+remove_style(struct tab *t)
+{
+	t->styled = 0;
+	g_object_set(G_OBJECT(t->settings),
+	    "user-stylesheet-uri", NULL, (char *)NULL);
 }
 
 int
 userstyle(struct tab *t, struct karg *args)
 {
+	struct tab		*tt;
+
 	DNPRINTF(XT_D_JS, "userstyle: tab %d\n", t->tab_id);
 
-	if (t->styled) {
-		t->styled = 0;
-		g_object_set(G_OBJECT(t->settings),
-		    "user-stylesheet-uri", NULL, (char *)NULL);
-	} else {
-		t->styled = 1;
-		apply_style(t);
+	switch (args->i) {
+	case XT_STYLE_CURRENT_TAB:
+		if (t->styled)
+			remove_style(t);
+		else
+			apply_style(t);
+		break;
+	case XT_STYLE_GLOBAL:
+		if (userstyle_global) {
+			userstyle_global = 0;
+			TAILQ_FOREACH(tt, &tabs, entry)
+				remove_style(tt);
+		} else {
+			userstyle_global = 1;
+			TAILQ_FOREACH(tt, &tabs, entry)
+				apply_style(tt);
+		}
+		break;
 	}
+
 	return (0);
 }
 
-/*
- * Doesn't work fully, due to the following bug:
- * https://bugs.webkit.org/show_bug.cgi?id=51747
- */
+int
+purge_history(void)
+{
+	struct history		*h, *next;
+	double			age = 0.0;
+
+	DNPRINTF(XT_D_HISTORY, "%s: hl_purge_count = %d (%d is max)\n",
+	    __func__, hl_purge_count, XT_MAX_HL_PURGE_COUNT);
+
+	if (hl_purge_count == XT_MAX_HL_PURGE_COUNT) {
+		hl_purge_count = 0;
+
+		for (h = RB_MIN(history_list, &hl); h != NULL; h = next) {
+
+			next = RB_NEXT(history_list, &hl, h);
+
+			age = difftime(time(NULL), h->time);
+
+			if (age > XT_MAX_HISTORY_AGE) {
+				DNPRINTF(XT_D_HISTORY, "%s: removing %s (age %.1f)\n",
+				    __func__, h->uri, age);
+
+				RB_REMOVE(history_list, &hl, h);
+				g_free(h->uri);
+				g_free(h->title);
+				g_free(h);
+			} else {
+				DNPRINTF(XT_D_HISTORY, "%s: keeping %s (age %.1f)\n",
+				    __func__, h->uri, age);
+			}
+		}
+	}
+
+	return (0);
+}
+
+int
+insert_history_item(const gchar *uri, const gchar *title, time_t time)
+{
+	struct history		*h;
+
+	if (!(uri && strlen(uri) && title && strlen(title)))
+		return (1);
+
+	h = g_malloc(sizeof(struct history));
+	h->uri = g_strdup(uri);
+	h->title = g_strdup(title);
+	h->time = time;
+
+	DNPRINTF(XT_D_HISTORY, "%s: adding %s\n", __func__, h->uri);
+
+	RB_INSERT(history_list, &hl, h);
+	completion_add_uri(h->uri);
+	hl_purge_count++;
+
+	purge_history();
+	update_history_tabs(NULL);
+
+	return (0);
+}
+
 int
 restore_global_history(void)
 {
 	char			file[PATH_MAX];
 	FILE			*f;
-	struct history		*h;
-	gchar			*uri;
-	gchar			*title;
+	gchar			*uri, *title, *stime, *err = NULL;
+	time_t			time;
+	struct tm		tm;
 	const char		delim[3] = {'\\', '\\', '\0'};
 
 	snprintf(file, sizeof file, "%s/%s", work_dir, XT_HISTORY_FILE);
@@ -1077,29 +1175,44 @@ restore_global_history(void)
 
 		if ((title = fparseln(f, NULL, NULL, delim, 0)) == NULL)
 			if (feof(f) || ferror(f)) {
-				free(uri);
-				warnx("%s: broken history file\n", __func__);
-				return (1);
+				err = "broken history file (title)";
+				goto done;
 			}
 
-		if (uri && strlen(uri) && title && strlen(title)) {
-			webkit_web_history_item_new_with_data(uri, title);
-			h = g_malloc(sizeof(struct history));
-			h->uri = g_strdup(uri);
-			h->title = g_strdup(title);
-			RB_INSERT(history_list, &hl, h);
-			completion_add_uri(h->uri);
-		} else {
-			warnx("%s: failed to restore history\n", __func__);
-			free(uri);
-			free(title);
-			return (1);
+		if ((stime = fparseln(f, NULL, NULL, delim, 0)) == NULL)
+			if (feof(f) || ferror(f)) {
+				err = "broken history file (time)";
+				goto done;
+			}
+
+		if (strptime(stime, "%a %b %d %H:%M:%S %Y", &tm) == NULL) {
+			err = "strptime failed to parse time";
+			goto done;
+		}
+
+		time = mktime(&tm);
+
+		if (insert_history_item(uri, title, time)) {
+			err = "failed to insert item";
+			goto done;
 		}
 
 		free(uri);
 		free(title);
+		free(stime);
 		uri = NULL;
 		title = NULL;
+		stime = NULL;
+	}
+
+done:
+	if (err && strlen(err)) {
+		warnx("%s: %s\n", __func__, err);
+		free(uri);
+		free(title);
+		free(stime);
+
+		return (1);
 	}
 
 	return (0);
@@ -1121,8 +1234,9 @@ save_global_history_to_disk(struct tab *t)
 	}
 
 	RB_FOREACH_REVERSE(h, history_list, &hl) {
-		if (h->uri && h->title)
-			fprintf(f, "%s\n%s\n", h->uri, h->title);
+		if (h->uri && h->title && h->time)
+			fprintf(f, "%s\n%s\n%s", h->uri, h->title,
+			    ctime(&h->time));
 	}
 
 	fclose(f);
@@ -1310,6 +1424,62 @@ save_tabs_and_quit(struct tab *t, struct karg *args)
 	quit(t, NULL);
 
 	return (1);
+}
+
+/* Marshall the internal record of visited URIs into a Javascript hash table in
+ * string form. */
+char *
+color_visited_helper(void)
+{
+	char			*s = NULL;
+	struct history		*h;
+
+	RB_FOREACH_REVERSE(h, history_list, &hl) {
+		if (s == NULL)
+			s = g_strdup_printf("'%s':'dummy'", h->uri);
+		else
+			s = g_strjoin(",", s,
+			    g_strdup_printf("'%s':'dummy'", h->uri), NULL);
+	}
+
+	s = g_strdup_printf("{%s}", s);
+
+	DNPRINTF(XT_D_VISITED, "%s: s = %s\n", __func__, s);
+
+	return (s);
+}
+
+int
+color_visited(struct tab *t, char *visited)
+{
+	char		*s;
+
+	if (t == NULL || visited == NULL) {
+		show_oops(NULL, "%s: invalid parameters", __func__);
+		return (1);
+	}
+
+	/* Create a string representing an annonymous Javascript function, which
+	 * takes a hash table of visited URIs as an argument, goes through the
+	 * links at the current web page and colors them if they indeed been
+	 * visited.
+	 */
+	s = g_strconcat(
+	    "(function(visitedUris) {",
+	    "    for (var i = 0; i < document.links.length; i++)",
+	    "        if (visitedUris[document.links[i].href])",
+	    "            document.links[i].style.color = 'purple';",
+	    "})",
+	    /* Apply the annonymous function to the hash table containing
+	     * visited URIs. */
+	    g_strdup_printf("(%s);", visited),
+	    NULL);
+
+	run_script(t, s);
+	g_free(s);
+	g_free(visited);
+
+	return (0);
 }
 
 int
@@ -1933,6 +2103,42 @@ remove_cookie(int index)
 }
 
 int
+remove_cookie_domain(int domain_id)
+{
+	int			domain_count, rv = 1;
+	GSList			*cf;
+	SoupCookie		*c;
+	char *last_domain;
+
+	DNPRINTF(XT_D_COOKIE, "remove_cookie_domain: %d\n", domain_id);
+
+	last_domain = "";
+	cf = soup_cookie_jar_all_cookies(s_cookiejar);
+
+	for (domain_count = 0; cf; cf = cf->next) {
+		c = cf->data;
+
+		if (strcmp(last_domain, c->domain) != 0) {
+			domain_count++;
+			last_domain = c->domain;
+		}
+
+		if (domain_count < domain_id)
+			continue;
+		else if (domain_count > domain_id)
+			break;
+
+		print_cookie("remove cookie", c);
+		soup_cookie_jar_delete_cookie(s_cookiejar, c);
+		rv = 0;
+	}
+
+	soup_cookies_free(cf);
+
+	return (rv);
+}
+
+int
 toplevel_cmd(struct tab *t, struct karg *args)
 {
 	js_toggle_cb(t->js_toggle, t);
@@ -2388,6 +2594,28 @@ tabaction(struct tab *t, struct karg *args)
 			g_free(u->uri);
 			/* u->history is freed in create_new_tab() */
 			g_free(u);
+		}
+		break;
+	case XT_TAB_LOAD_IMAGES:
+
+		if (!auto_load_images) {
+
+			/* Enable auto-load images (this will load all
+			 * previously unloaded images). */
+			g_object_set(G_OBJECT(t->settings),
+			    "auto-load-images", TRUE, (char *)NULL);
+			webkit_web_view_set_settings(t->wv, t->settings);
+
+			webkit_web_view_reload(t->wv);
+
+			/* Webkit triggers an event when we change the setting,
+			 * so we can't disable the auto-loading at once.
+			 *
+			 * Unfortunately, webkit does not tell us when it's done.
+			 * Instead, we wait until the next request, and then
+			 * disable autoloading again.
+			 */
+			t->load_images = TRUE;
 		}
 		break;
 	default:
@@ -2959,7 +3187,8 @@ struct cmd {
 	{ "hinting_newtab",	0,	hint,			XT_HINT_NEWTAB,		0 },
 
 	/* custom stylesheet */
-	{ "userstyle",		0,	userstyle,		0,			0 },
+	{ "userstyle",		0,	userstyle,		XT_STYLE_CURRENT_TAB,	0 },
+	{ "userstyle_global",	0,	userstyle,		XT_STYLE_GLOBAL,	0 },
 
 	/* navigation */
 	{ "goback",		0,	navaction,		XT_NAV_BACK,		0 },
@@ -3084,6 +3313,7 @@ struct cmd {
 	{ "buffers",		0,	buffers,		0,			0 },
 	{ "ls",			0,	buffers,		0,			0 },
 	{ "encoding",		0,	set_encoding,		0,			XT_USERARG },
+	{ "loadimages",		0,	tabaction,		XT_TAB_LOAD_IMAGES,	0 },
 
 	/* command aliases (handy when -S flag is used) */
 	{ "promptopen",		0,	command,		XT_CMD_OPEN,		0 },
@@ -3745,7 +3975,7 @@ notify_icon_loaded_cb(WebKitWebView *wv, gchar *uri, struct tab *t)
 void
 notify_load_status_cb(WebKitWebView* wview, GParamSpec* pspec, struct tab *t)
 {
-	const gchar		*uri = NULL, *title = NULL;
+	const gchar		*uri = NULL;
 	struct history		*h, find;
 	struct karg		a;
 	GdkColor		color;
@@ -3824,28 +4054,33 @@ notify_load_status_cb(WebKitWebView* wview, GParamSpec* pspec, struct tab *t)
 
 	case WEBKIT_LOAD_FIRST_VISUALLY_NON_EMPTY_LAYOUT:
 		/* 3 */
+		if (color_visited_uris) {
+			color_visited(t, color_visited_helper());
+
+			/* This colors the links you middle-click (open in new
+			 * tab) in the current tab. */
+			if (t->tab_id != gtk_notebook_get_current_page(notebook) &&
+			    (uri = get_uri(t)) != NULL)
+				color_visited(get_current_tab(),
+				    g_strdup_printf("{'%s' : 'dummy'}", uri));
+		}
 		break;
 
 	case WEBKIT_LOAD_FINISHED:
 		/* 2 */
-		uri = get_uri(t);
-		if (uri == NULL)
+		if ((uri = get_uri(t)) == NULL)
 			return;
 
 		if (!strncmp(uri, "http://", strlen("http://")) ||
 		    !strncmp(uri, "https://", strlen("https://")) ||
 		    !strncmp(uri, "file://", strlen("file://"))) {
-			find.uri = uri;
+			find.uri = (gchar *)uri;
 			h = RB_FIND(history_list, &hl, &find);
-			if (!h) {
-				title = get_title(t, FALSE);
-				h = g_malloc(sizeof *h);
-				h->uri = g_strdup(uri);
-				h->title = g_strdup(title);
-				RB_INSERT(history_list, &hl, h);
-				completion_add_uri(h->uri);
-				update_history_tabs(NULL);
-			}
+			if (!h)
+				insert_history_item(uri,
+				    get_title(t, FALSE), time(NULL));
+			else
+				h->time = time(NULL);
 		}
 
 		set_status(t, (char *)uri, XT_STATUS_URI);
@@ -3879,9 +4114,12 @@ notify_title_cb(WebKitWebView* wview, GParamSpec* pspec, struct tab *t)
 
 	title = get_title(t, FALSE);
 	win_title = get_title(t, TRUE);
-	gtk_label_set_text(GTK_LABEL(t->label), title);
-	gtk_label_set_text(GTK_LABEL(t->tab_elems.label), title);
-	if (t->tab_id == gtk_notebook_get_current_page(notebook))
+	if (title) {
+		gtk_label_set_text(GTK_LABEL(t->label), title);
+		gtk_label_set_text(GTK_LABEL(t->tab_elems.label), title);
+	}
+
+	if (win_title && t->tab_id == gtk_notebook_get_current_page(notebook))
 		gtk_window_set_title(GTK_WINDOW(main_window), win_title);
 }
 
@@ -4090,6 +4328,17 @@ webview_npd_cb(WebKitWebView *wv, WebKitWebFrame *wf,
 
 	uri = (char *)webkit_network_request_get_uri(request);
 
+	if (!auto_load_images && t->load_images) {
+
+		/* Disable autoloading of images, now that we're done loading
+		 * them. */
+		g_object_set(G_OBJECT(t->settings),
+		    "auto-load-images", FALSE, (char *)NULL);
+		webkit_web_view_set_settings(t->wv, t->settings);
+
+		t->load_images = FALSE;
+	}
+
 	/* if this is an xtp url, we don't load anything else */
 	if (parse_xtp_url(t, uri))
 		    return (TRUE);
@@ -4099,6 +4348,26 @@ webview_npd_cb(WebKitWebView *wv, WebKitWebFrame *wf,
 		create_new_tab(uri, NULL, ctrl_click_focus, -1);
 		webkit_web_policy_decision_ignore(pd);
 		return (TRUE); /* we made the decission */
+	}
+
+	/* change user agent */
+	if (user_agent_roundrobin ) {
+		struct user_agent *ua;
+
+		if ((ua = TAILQ_NEXT(user_agent, entry)) == NULL)
+			user_agent = TAILQ_FIRST(&ua_list);
+		else
+			user_agent = ua;
+
+		free(t->user_agent);
+		t->user_agent = g_strdup(user_agent->value);
+
+		DNPRINTF(XT_D_NAV, "user-agent: %s\n", t->user_agent);
+
+		g_object_set(G_OBJECT(t->settings),
+			"user-agent", t->user_agent, (char *)NULL);
+
+		webkit_web_view_set_settings(wv, t->settings);
 	}
 
 	/*
@@ -4577,17 +4846,21 @@ qmark(struct tab *t, struct karg *arg)
 int
 go_up(struct tab *t, struct karg *args)
 {
-	int		 levels;
+	int		levels;
 	char		*uri;
 	char		*tmp;
+	char		*p;
 
-	levels = atoi(args->s);
-	if (levels == 0)
+	if (args->i == XT_GO_UP_ROOT)
+		levels = XT_GO_UP_ROOT;
+	else if ((levels = atoi(args->s)) == 0)
 		levels = 1;
 
-	uri = g_strdup(webkit_web_view_get_uri(t->wv));
+	uri = g_strdup(get_uri(t));
+
 	if ((tmp = strstr(uri, XT_PROTO_DELIM)) == NULL)
 		return (1);
+
 	tmp += strlen(XT_PROTO_DELIM);
 
 	/* if an uri starts with a slash, leave it alone (for file:///) */
@@ -4595,8 +4868,6 @@ go_up(struct tab *t, struct karg *args)
 		tmp++;
 
 	while (levels--) {
-		char	*p;
-
 		p = strrchr(tmp, '/');
 		if (p != NULL)
 			*p = '\0';
@@ -4618,9 +4889,59 @@ gototab(struct tab *t, struct karg *args)
 
 	tab = atoi(args->s);
 
-	arg.i = XT_TAB_NEXT;
+	if (args->i == 0)
+		arg.i = XT_TAB_NEXT;
+	else
+		arg.i = args->i;
+
 	arg.precount = tab;
 
+	movetab(t, &arg);
+
+	return (0);
+}
+
+int
+gotonexttab(struct tab *t, struct karg *args)
+{
+	int			count, n_tabs, dest;
+	struct karg 		arg = {0, NULL, -1};
+
+	count = atoi(args->s);
+	if (count == 0)
+		count = 1;
+
+	arg.i = XT_TAB_NEXT;
+
+	n_tabs = gtk_notebook_get_n_pages(notebook);
+	dest = gtk_notebook_get_current_page(notebook);
+
+	dest += (count + 1) % n_tabs;
+	if (dest > n_tabs)
+		dest -= n_tabs;
+	arg.precount = dest;
+
+	DNPRINTF(XT_D_BUFFERCMD, "gotonexttab: count: %d - dest : %d \n", count, dest);
+
+	movetab(t, &arg);
+
+	return (0);
+}
+
+int
+gotoprevtab(struct tab *t, struct karg *args)
+{
+	int		count;
+	struct 		karg arg = {0, NULL, -1};
+
+	count = atoi(args->s);
+	if (count == 0)
+		count = 1;
+
+	arg.i = XT_TAB_PREV;
+	arg.precount = count;
+
+	DNPRINTF(XT_D_BUFFERCMD, "gotoprevtab: count: %d\n", count);
 	movetab(t, &arg);
 
 	return (0);
@@ -4672,6 +4993,7 @@ struct buffercmd {
 	regex_t		cregex;
 } buffercmds[] = {
 	{ "^[0-9]*gu$",		XT_PRE_MAYBE,	"gu",	go_up,		0 },
+	{ "^gU$",		XT_PRE_NO,	"gU",	go_up,		XT_GO_UP_ROOT },
 	{ "^gg$",		XT_PRE_NO,	"gg",	move,		XT_MOVE_TOP },
 	{ "^gG$",		XT_PRE_NO,	"gG",	move,		XT_MOVE_BOTTOM },
 	{ "^[0-9]+%$",		XT_PRE_YES,	"%",	move,		XT_MOVE_PERCENT },
@@ -4680,6 +5002,10 @@ struct buffercmd {
 	{ "^m[a-zA-Z0-9]$",	XT_PRE_NO,	"m",	mark,		XT_MARK_SET },
 	{ "^['][a-zA-Z0-9]$",	XT_PRE_NO,	"'",	mark,		XT_MARK_GOTO },
 	{ "^[0-9]+t$",		XT_PRE_YES,	"t",	gototab,	0 },
+	{ "^g0$",		XT_PRE_YES,	"g0",	gototab,	XT_TAB_FIRST },
+	{ "^g[$]$",		XT_PRE_YES,	"g$",	gototab,	XT_TAB_LAST },
+	{ "^[0-9]*gt$",		XT_PRE_YES,	"t",	gotonexttab,	0 },
+	{ "^[0-9]*gT$",		XT_PRE_YES,	"T",	gotoprevtab,	0 },
 	{ "^M[a-zA-Z0-9]$",	XT_PRE_NO,	"M",	qmark,		XT_QMARK_SET },
 	{ "^go[a-zA-Z0-9]$",	XT_PRE_NO,	"go",	qmark,		XT_QMARK_OPEN },
 	{ "^gn[a-zA-Z0-9]$",	XT_PRE_NO,	"gn",	qmark,		XT_QMARK_TAB },
@@ -4740,6 +5066,11 @@ buffercmd_addkey(struct tab *t, guint keyval)
 {
 	int			i, c, match ;
 	char			s[XT_BUFCMD_SZ];
+
+	if (gtk_widget_get_visible(GTK_WIDGET(t->buffers))) {
+		buffercmd_abort(t);
+		return (XT_CB_PASSTHROUGH);
+	}
 
 	if (keyval == GDK_Escape) {
 		buffercmd_abort(t);
@@ -4861,13 +5192,13 @@ wv_keypress_cb(GtkEntry *w, GdkEventKey *e, struct tab *t)
 	/* don't use w directly; use t->whatever instead */
 
 	if (t == NULL) {
-		show_oops(NULL, "wv_keypress_after_cb");
+		show_oops(NULL, "wv_keypress_cb");
 		return (XT_CB_PASSTHROUGH);
 	}
 
 	hide_oops(t);
 
-	DNPRINTF(XT_D_KEY, "wv_keypress_after_cb: mode %d keyval 0x%x mask "
+	DNPRINTF(XT_D_KEY, "wv_keypress_cb: mode %d keyval 0x%x mask "
 	    "0x%x tab %d\n", t->mode, e->keyval, e->state, t->tab_id);
 
 	/* Hide buffers, if they are visible, with escape. */
@@ -4890,7 +5221,7 @@ wv_keypress_cb(GtkEntry *w, GdkEventKey *e, struct tab *t)
 		/* XXX make sure cmd entry is enabled */
 		return (XT_CB_HANDLED);
 	} else if (t->mode == XT_MODE_COMMAND) {
-		/* prefix input*/
+		/* prefix input */
 		snprintf(s, sizeof s, "%c", e->keyval);
 		if (CLEAN(e->state) == 0 && isdigit(s[0]))
 			cmd_prefix = 10 * cmd_prefix + atoi(s);
@@ -5688,6 +6019,8 @@ setup_webkit(struct tab *t)
 	    "enable-developer-extras", TRUE, (char *)NULL);
 	g_object_set(G_OBJECT(t->wv),
 	    "full-content-zoom", TRUE, (char *)NULL);
+	g_object_set(G_OBJECT(t->settings),
+	    "auto-load-images", auto_load_images, (char *)NULL);
 
 	webkit_web_view_set_settings(t->wv, t->settings);
 }
@@ -5737,7 +6070,10 @@ create_window(const gchar *name)
 	GtkWidget		*w;
 
 	w = gtk_window_new(GTK_WINDOW_TOPLEVEL);
-	gtk_window_set_default_size(GTK_WINDOW(w), window_width, window_height);
+	if (window_maximize)
+		gtk_window_maximize(GTK_WINDOW(w));
+	else
+		gtk_window_set_default_size(GTK_WINDOW(w), window_width, window_height);
 	gtk_widget_set_name(w, name);
 	gtk_window_set_wmclass(GTK_WINDOW(w), name, "XXXTerm");
 
@@ -5779,9 +6115,10 @@ create_browser(struct tab *t)
 		t->user_agent = g_strdup_printf("%s %s+", strval, version);
 		g_free(strval);
 	} else
-		t->user_agent = g_strdup(user_agent);
+		t->user_agent = g_strdup(user_agent->value);
 
 	t->stylesheet = g_strdup_printf("file://%s/style.css", resource_dir);
+	t->load_images = auto_load_images;
 
 	adjustment =
 	    gtk_scrolled_window_get_vadjustment(GTK_SCROLLED_WINDOW(w));
@@ -5926,7 +6263,7 @@ create_buffers(struct tab *t)
 	gtk_tree_view_set_model
 	    (GTK_TREE_VIEW(view), GTK_TREE_MODEL(buffers_store));
 
-	return view;
+	return (view);
 }
 
 void
@@ -6538,6 +6875,9 @@ create_new_tab(char *title, struct undo *u, int focus, int position)
 		}
 	} else if (load)
 		load_uri(t, title);
+
+	if (userstyle_global)
+		apply_style(t);
 
 	recolor_compact_tabs();
 	setzoom_webkit(t, XT_ZOOM_NORMAL);
@@ -7166,6 +7506,7 @@ main(int argc, char *argv[])
 	TAILQ_INIT(&spl);
 	TAILQ_INIT(&chl);
 	TAILQ_INIT(&shl);
+	TAILQ_INIT(&ua_list);
 
 	/* fiddle with ulimits */
 	if (getrlimit(RLIMIT_NOFILE, &rlp) == -1)
@@ -7252,6 +7593,7 @@ main(int argc, char *argv[])
 	statusbar_font_name = g_strdup("monospace normal 9");
 	tabbar_font_name = g_strdup("monospace normal 9");
 	statusbar_elems = g_strdup("BP");
+	spell_check_languages = g_strdup("en_US");
 	encoding = g_strdup("UTF-8");
 
 	/* read config file */
