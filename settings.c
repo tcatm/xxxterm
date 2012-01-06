@@ -34,6 +34,7 @@ int		enable_socket = 0;
 int		single_instance = 0; /* only allow one xxxterm to run */
 int		fancy_bar = 1;	/* fancy toolbar */
 int		browser_mode = XT_BM_NORMAL;
+int		gui_mode = XT_GM_CLASSIC;
 int		enable_localstorage = 1;
 char		*statusbar_elems = NULL;
 
@@ -72,7 +73,6 @@ int		allow_volatile_cookies = 0;
 int		color_visited_uris = 1;
 int		save_global_history = 0; /* save global history to disk */
 struct user_agent	*user_agent = NULL;
-int		user_agent_roundrobin = 0; /* change user-agent after each request */
 int		save_rejected_cookies = 0;
 int		session_autosave = 0;
 int		guess_search = 0;
@@ -92,6 +92,10 @@ int		js_autorun_enabled = 1;
 int		edit_mode = XT_EM_HYBRID;
 int		userstyle_global = 0;
 int		auto_load_images = 1;
+int		enable_autoscroll = 0;
+int		enable_favicon_entry = 1;
+int		enable_favicon_tabs = 0;
+char		*external_editor = NULL;
 
 char		*cmd_font_name = NULL;
 char		*oops_font_name = NULL;
@@ -119,8 +123,11 @@ int		set_runtime_dir(struct settings *, char *);
 int		set_tab_style(struct settings *, char *);
 int		set_edit_mode(struct settings *, char *);
 int		set_work_dir(struct settings *, char *);
-int		set_ua_roundrobin(char *);
 int		set_auto_load_images(char *value);
+int		set_enable_autoscroll(char *value);
+int		set_enable_favicon_entry(char *value);
+int		set_enable_favicon_tabs(char *value);
+int		set_external_editor(char *);
 
 void		walk_mime_type(struct settings *, void (*)(struct settings *,
 		    char *, void *), void *);
@@ -173,6 +180,12 @@ struct special {
 struct special		s_browser_mode = {
 	set_browser_mode,
 	get_browser_mode,
+	NULL
+};
+
+struct special		s_gui_mode = {
+	set_gui_mode,
+	get_gui_mode,
 	NULL
 };
 
@@ -259,6 +272,7 @@ struct settings		rs[] = {
 	{ "append_next",		XT_S_INT, 0,		&append_next, NULL, NULL },
 	{ "autofocus_onload",		XT_S_INT, 0,		&autofocus_onload, NULL, NULL },
 	{ "browser_mode",		XT_S_INT, 0, NULL, NULL,&s_browser_mode },
+	{ "gui_mode",			XT_S_INT, 0, NULL, NULL,&s_gui_mode },
 	{ "color_visited_uris",		XT_S_INT, 0,		&color_visited_uris, NULL, NULL },
 	{ "cookie_policy",		XT_S_INT, 0, NULL, NULL,&s_cookie },
 	{ "cookies_enabled",		XT_S_INT, 0,		&cookies_enabled, NULL, NULL },
@@ -276,6 +290,7 @@ struct settings		rs[] = {
 	{ "enable_socket",		XT_S_INT, XT_SF_RESTART,&enable_socket, NULL, NULL },
 	{ "enable_spell_checking",	XT_S_INT, 0,		&enable_spell_checking, NULL, NULL },
 	{ "encoding",			XT_S_STR, 0, NULL,	&encoding, NULL },
+	{ "external_editor",		XT_S_STR,0, NULL,	&external_editor, NULL, NULL, set_external_editor },
 	{ "fancy_bar",			XT_S_INT, XT_SF_RESTART,&fancy_bar, NULL, NULL },
 	{ "guess_search",		XT_S_INT, 0,		&guess_search, NULL, NULL },
 	{ "history_autosave",		XT_S_INT, 0,		&history_autosave, NULL, NULL },
@@ -308,8 +323,10 @@ struct settings		rs[] = {
 	{ "window_maximize",		XT_S_INT, 0,		&window_maximize, NULL, NULL },
 	{ "work_dir",			XT_S_STR, 0, NULL, NULL,&s_work_dir },
 	{ "xterm_workaround",		XT_S_INT, 0,		&xterm_workaround, NULL, NULL },
-	{ "user_agent_roundrobin",	XT_S_INT, 0,		&user_agent_roundrobin, NULL, NULL, NULL, set_ua_roundrobin },
-	{ "auto_load_images",		XT_S_INT, 0, 		&auto_load_images, NULL, NULL, NULL, set_auto_load_images },
+	{ "auto_load_images",		XT_S_INT, 0,		&auto_load_images, NULL, NULL, NULL, set_auto_load_images },
+	{ "enable_autoscroll",		XT_S_INT, 0,		&enable_autoscroll, NULL, NULL, NULL, set_enable_autoscroll },
+	{ "enable_favicon_entry",	XT_S_INT, 0,		&enable_favicon_entry, NULL, NULL, NULL, set_enable_favicon_entry },
+	{ "enable_favicon_tabs",	XT_S_INT, 0,		&enable_favicon_tabs, NULL, NULL, NULL, set_enable_favicon_tabs },
 
 	/* font settings */
 	{ "cmd_font",			XT_S_STR, 0, NULL, &cmd_font_name, NULL },
@@ -447,6 +464,42 @@ get_browser_mode(struct settings *s)
 		r = g_strdup("normal");
 	else if (browser_mode == XT_BM_KIOSK)
 		r = g_strdup("kiosk");
+	else
+		return (NULL);
+
+	return (r);
+}
+
+int
+set_gui_mode(struct settings *s, char *val)
+{
+	if (!strcmp(val, "classic")) {
+		fancy_bar = 1;
+		show_tabs = 1;
+		tab_style = XT_TABS_NORMAL;
+		show_url = 1;
+		show_statusbar = 0;
+	} else if (!strcmp(val, "minimal")) {
+		fancy_bar = 0;
+		show_tabs = 1;
+		tab_style = XT_TABS_COMPACT;
+		show_url = 0;
+		show_statusbar = 1;
+	} else
+		return (1);
+
+	return (0);
+}
+
+char *
+get_gui_mode(struct settings *s)
+{
+	char			*r = NULL;
+
+	if (gui_mode == XT_GM_CLASSIC)
+		r = g_strdup("classic");
+	else if (browser_mode == XT_GM_MINIMAL)
+		r = g_strdup("minimal");
 	else
 		return (NULL);
 
@@ -682,6 +735,7 @@ struct key_binding	keys[] = {
 	{ "help",		0,	1,	GDK_F1		},
 	{ "run_script",		MOD1,	1,	GDK_r		},
 	{ "proxy toggle",	0,	1,	GDK_F2		},
+	{ "editelement",	CTRL,	1,	GDK_i		},
 
 	/* search */
 	{ "searchnext",		0,	0,	GDK_n		},
@@ -953,6 +1007,7 @@ add_ua(struct settings *s, char *value)
 
 	/* use the last added user agent */
 	user_agent = TAILQ_FIRST(&ua_list);
+	user_agent_count++;
 
 	return (0);
 }
@@ -975,13 +1030,6 @@ walk_ua(struct settings *s,
 }
 
 int
-set_ua_roundrobin(char *value)
-{
-	user_agent_roundrobin = atoi(value);
-	return (0);
-}
-
-int
 set_auto_load_images(char *value)
 {
 	struct tab *t;
@@ -992,6 +1040,38 @@ set_auto_load_images(char *value)
 		    "auto-load-images", auto_load_images, (char *)NULL);
 		webkit_web_view_set_settings(t->wv, t->settings);
 	}
+	return (0);
+}
+
+int
+set_enable_autoscroll(char *value)
+{
+	enable_autoscroll = atoi(value);
+	return (0);
+}
+
+int
+set_enable_favicon_entry(char *value)
+{
+	enable_favicon_entry = atoi(value);
+	return (0);
+}
+
+int
+set_enable_favicon_tabs(char *value)
+{
+	enable_favicon_tabs = atoi(value);
+	return (0);
+}
+
+int
+set_external_editor(char *editor)
+{
+	if (external_editor)
+		g_free(external_editor);
+
+	external_editor = g_strdup(editor);
+
 	return (0);
 }
 

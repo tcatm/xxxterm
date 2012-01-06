@@ -28,6 +28,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <dirent.h>
+#include <fcntl.h>
 
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -76,7 +77,6 @@ u_int32_t	arc4random_uniform(u_int32_t);
 #include <pthread.h>
 #endif
 
-#include "version.h"
 #include "javascript.h"
 /*
 javascript.h borrowed from vimprobable2 under the following license:
@@ -152,6 +152,7 @@ struct tab {
 	GtkWidget		*tab_content;
 	struct {
 		GtkWidget	*label;
+		GtkWidget	*favicon;
 		GtkWidget	*eventbox;
 		GtkWidget	*box;
 		GtkWidget	*sep;
@@ -275,6 +276,8 @@ void			show_oops(struct tab *, const char *, ...);
 gchar			*get_html_page(gchar *, gchar *, gchar *, bool);
 const gchar		*get_uri(struct tab *);
 const gchar		*get_title(struct tab *, bool);
+void			load_uri(struct tab *t, gchar *uri);
+gboolean		match_uri(const gchar *uri, const gchar *key);
 
 void			load_webkit_string(struct tab *, const char *, gchar *);
 void			button_set_stockid(GtkWidget *, char *);
@@ -284,6 +287,22 @@ int			remove_cookie(int);
 int			remove_cookie_domain(int);
 void			print_cookie(char *msg, SoupCookie *);
 void			setup_cookies(void);
+
+/* history */
+int			insert_history_item(const gchar *uri, const gchar *title, time_t time);
+int			save_global_history_to_disk(struct tab *t);
+int			restore_global_history(void);
+char			*color_visited_helper(void);
+int			color_visited(struct tab *t, char *visited);
+
+/* completion */
+void			completion_add(struct tab *);
+void			completion_add_uri(const gchar *uri);
+
+/* external editor */
+#define XT_EE_BUFSZ	(64 * 1024)
+int			edit_src(struct tab *t, struct karg *args);
+int			edit_element(struct tab *t, struct karg *a);
 
 /* proxy */
 #define XT_PRXY_SHOW		(1<<0)
@@ -430,6 +449,9 @@ int		command_mode(struct tab *, struct karg *);
 #define XT_BM_WHITELIST		(1)
 #define XT_BM_KIOSK		(2)
 
+#define XT_GM_CLASSIC		(0)
+#define XT_GM_MINIMAL		(1)
+
 #define XT_TABS_NORMAL		(0)
 #define XT_TABS_COMPACT		(1)
 
@@ -477,8 +499,10 @@ size_t		get_settings_size(void);
 int		settings_add(char *, char *);
 void		setup_proxy(char *);
 int		set_browser_mode(struct settings *, char *);
+int		set_gui_mode(struct settings *, char *);
 int		set_cookie_policy(struct settings *, char *);
 char		*get_browser_mode(struct settings *);
+char		*get_gui_mode(struct settings *);
 char		*get_cookie_policy(struct settings *);
 void		init_keybindings(void);
 void		config_parse(char *, int);
@@ -521,13 +545,13 @@ extern int	append_next;
 extern char	*home;
 extern char	*search_string;
 extern char	*http_proxy;
+extern char	*external_editor;
 extern char	download_dir[PATH_MAX];
 extern char	runtime_settings[PATH_MAX];
 extern int	allow_volatile_cookies;
 extern int	color_visited_uris;
 extern int	save_global_history;
 extern struct user_agent	*user_agent;
-extern int	user_agent_roundrobin;
 extern int	save_rejected_cookies;
 extern int	session_autosave;
 extern int	guess_search;
@@ -551,22 +575,28 @@ extern char	*tabbar_font_name;
 extern int	edit_mode;
 extern int	userstyle_global;
 extern int	auto_load_images;
+extern int	enable_autoscroll;
+extern int	enable_favicon_entry;
+extern int	enable_favicon_tabs;
 
 /* globals */
 extern char		*version;
 extern char		*icons[];
 extern char		rc_fname[PATH_MAX];
 extern char		work_dir[PATH_MAX];
+extern char		temp_dir[PATH_MAX];
 extern struct passwd	*pwd;
 long long unsigned int	blocked_cookies;
 extern SoupCookieJar	*s_cookiejar;
 extern SoupCookieJar	*p_cookiejar;
 extern SoupSession	*session;
 extern GtkNotebook	*notebook;
+extern GtkListStore	*completion_model;
 
 extern void	(*_soup_cookie_jar_add_cookie)(SoupCookieJar *, SoupCookie *);
 
 extern struct history_list	hl;
+extern int			hl_purge_count;
 extern struct download_list	downloads;
 extern struct tab_list		tabs;
 extern struct about_type	about_list[];
@@ -578,6 +608,7 @@ extern struct mime_type_list	mtl;
 extern struct keybinding_list	kbl;
 extern struct sp_list		spl;
 extern struct user_agent_list	ua_list;
+extern int			user_agent_count;
 
 extern PangoFontDescription	*cmd_font;
 extern PangoFontDescription	*oops_font;

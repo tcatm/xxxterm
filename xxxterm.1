@@ -404,6 +404,14 @@ Toggle the global page style mode.
 Will also affect new tabs.
 .Pq Cm userstyle_global
 .El
+.Ss Insert-mode commands
+The following commands are only available when editing an input-field
+.Pp
+.Bl -tag -width Ds -offset indent -compact
+.It Cm C-i
+Edit the contents of the currently active input-element in an external editor.
+.Pq Cm editelement
+.El
 .Sh COMMAND MODE
 Command mode works in a similar fashion to the
 .Xr vi 1
@@ -470,6 +478,17 @@ If
 is not set
 .Nm
 will display the current tab encoding.
+.It Cm editsrc
+Opens the source for the current tab in the editor specified by the
+setting
+.Cm external_editor
+and then checks for changes to the file opened. If it is changed, the
+page will be updated.
+.It Cm editelement
+If a text-element is currently active (<input> or <textarea>), it's
+contents will be opened in the same fashion as for the command
+.Cm editsrc
+above
 .It Cm fav
 Show favorites.
 .It Cm favadd
@@ -995,10 +1014,28 @@ Locations where files are downloaded to.
 This directory must exist and
 .Nm
 validates that during startup.
+.It Cm enable_autoscroll
+When enabled clicking MB3 will spawn the autoscroll ball, scrolling can
+then proceed by dragging the mouse away from the ball.
 .It Cm enable_cookie_whitelist
 When enabled all cookies must be in the whitelist or they are rejected.
 Additionally whitelisted cookies also enable HTML5 local storage for the
 domain.
+.It Cm enable_favicon_entry
+When enabled (the default)
+.Nm
+displays the favicon of the web page at the URI entry. This setting
+affects both
+.Cm normal
+and
+.Cm compact
+tabs.
+.It Cm enable_favicon_tabs
+When enabled (disabled by default)
+.Nm
+displays favicons at each tab. This setting only affects
+.Cm compact
+tabs.
 .It Cm enable_js_whitelist
 When enabled all domains must be in the js whitelist in order to run Java
 Script.
@@ -1035,6 +1072,16 @@ option.
 Set the default encoding.
 E.g.
 .Pa encoding = ISO-8859-1 .
+.It Cm external_editor
+Set which editor to use for external editing.
+the string <file> will be replaced by the current filename.
+E.g.
+.Pa external_editor = gvim -f <file>
+Note!
+.Cm xxxterm
+relies on the editor
+.Pa not forking
+into the background.
 .It Cm fancy_bar
 Enables a backward, forward, and stop button to the toolbar.
 Additionally if
@@ -1049,6 +1096,20 @@ the command widget, is term you want to search for using search_string
 If the string does not contain a dot nor a slash, is not a
 path to a local file and does not resolves to an IP then it is assumed
 to be a search term.
+.It Cm gui_mode
+To simplify configuring
+.Nm
+allows you pick between two GUI modes:
+.Pa classic
+(the default) and
+.Pa minimal .
+In the
+.Pa classic
+mode the GUI looks similar to that of most mainstream browsers. While in
+.Pa minimal
+mode the GUI looks more vi-like. One can get a GUI between the two by
+tweaking the low-level GUI settings found under the advanced GUI setting
+section in the configuration file.
 .It Cm history_autosave
 When enabled
 .Nm
@@ -1231,9 +1292,8 @@ URL when using
 .It Cm user_agent
 Set to override the default
 .Nm
-user-agent string. May be specified several times for switching between user-agents.
-.It Cm user_agent_roundrobin
-If enabled, switches between specified user-agents for each new request.
+user-agent string. May be specified several times for switching between
+user-agents.
 .It Cm window_height
 Set the default height of the browser window.
 .It Cm window_width

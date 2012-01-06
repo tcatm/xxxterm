@@ -15,9 +15,9 @@ CC?= cc
 
 all: ../javascript.h xxxterm
 
-../javascript.h: ../js-merge-helper.pl ../hinting.js
-	perl ../js-merge-helper.pl ../hinting.js ../input-focus.js > \
-	../javascript.h
+../javascript.h: ../js-merge-helper.pl ../hinting.js ../autoscroll.js
+	perl ../js-merge-helper.pl ../hinting.js ../input-focus.js \
+	../autoscroll.js > ../javascript.h
 
 xxxterm.o: ../xxxterm.o
 
@@ -35,9 +35,16 @@ cookie.o: ../cookie.o
 
 inputfocus.o: ../inputfocus.o
 
+history.o: ../history.o
+
+completion.o: ../completion.o
+
+externaleditor.o: ../externaleditor.o
+
 ../xxxterm.o: ../javascript.h
 
-xxxterm: xxxterm.o freebsd.o marco.o about.o inspector.o whitelist.o settings.o cookie.o
+xxxterm: xxxterm.o freebsd.o marco.o about.o inspector.o whitelist.o settings.o \
+	cookie.o history.o completion.o inputfocus.o externaleditor.o
 	$(CC) $(LDFLAGS) -o $@ *.o $+ $(LDADD)
 
 install: all

@@ -499,6 +499,7 @@ xtp_handle_dl(struct tab *t, uint8_t cmd, int id)
 	switch (cmd) {
 	case XT_XTP_DL_CANCEL:
 		webkit_download_cancel(d->download);
+		g_object_unref(d->download);
 		break;
 	case XT_XTP_DL_UNLINK:
 		unlink(webkit_download_get_destination_uri(d->download) +
@@ -620,7 +621,7 @@ remove_favorite(struct tab *t, int index)
 	}
 
 	if (fwrite(new_favs, strlen(new_favs), 1, f) != 1)
-		show_oops(t, "%s: can't fwrite", __func__); /* shut gcc up */
+		show_oops(t, "%s: can't fwrite", __func__);
 	fclose(f);
 
 clean:
@@ -970,7 +971,7 @@ xtp_page_fl(struct tab *t, struct karg *args)
 	for (i = 1;;) {
 		if ((title = fparseln(f, &len, &lineno, delim, 0)) == NULL)
 			break;
-		if (strlen(title) == 0 || title[0] == '#') {
+		if (strlen(title) == 0) {
 			free(title);
 			title = NULL;
 			continue;
